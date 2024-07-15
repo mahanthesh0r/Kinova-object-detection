@@ -10,6 +10,10 @@ import tf
 import tf.transformations as tf_trans
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point
+from kortex_api.autogen.client_stubs.BaseClientRpc import BaseClient
+
+from kortex_api.autogen.messages import Base_pb2
+from kortex_api.Exceptions.KServerException import KServerException
 
 # Constants for image processing
 NEW_WIDTH = 480
@@ -131,6 +135,11 @@ class ImageProcessor:
         world_coords = calculate_world_coordinates(u, v, Z_c, K, R, t)
         print("Calculated World Coordinates:", world_coords)
 
+        # Convert world_coords from centimeters to meters
+        world_coords = np.array(world_coords) / 100
+
+        print("Calculated World Coordinates in Meters:", world_coords)
+
         # Reproject the world coordinates back to image coordinates
         reprojected_coords = reproject_world_to_image(world_coords, K, R, t)
         print("Reprojected Image Coordinates:", reprojected_coords)
@@ -171,6 +180,8 @@ class ImageProcessor:
         # Create a TransformStamped object with the world coordinates
         world_point = tf.transformations.translation_matrix(world_coords)
         world_point[3][3] = 1.0  # homogeneous coordinate
+        
+        print("World Point: ", world_point)
 
         # Get the transformation from the world frame to the robot frame
         try:
@@ -179,12 +190,21 @@ class ImageProcessor:
                 tf.transformations.translation_matrix(trans),
                 tf.transformations.quaternion_matrix(rot)
             )
+            print("Transform: ", transform)
             # Transform the world coordinates to the robot frame
             robot_point = np.dot(transform, world_point)
+             
+            print("Robot Point: ", robot_point)
+
+            print("Quaternion: ", rot)
+            euler_angles = tf.transformations.euler_from_quaternion(rot)
+            print("Euler Angles: ", euler_angles)
+
             return robot_point[:3, 3]  # extract the (x, y, z) coordinates
         except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
             rospy.logerr("Transform lookup failed")
             return None
+        
     
     def publish_marker(self, robot_frame_coords):
         marker = Marker()
@@ -194,9 +214,9 @@ class ImageProcessor:
         marker.id = 0
         marker.type = Marker.SPHERE
         marker.action = Marker.ADD
-        marker.pose.position.x = robot_frame_coords[0] / 100
-        marker.pose.position.y = robot_frame_coords[1] / 100
-        marker.pose.position.z = 0.05
+        marker.pose.position.x = robot_frame_coords[0] 
+        marker.pose.position.y = robot_frame_coords[1] 
+        marker.pose.position.z = robot_frame_coords[2]
         marker.pose.orientation.x = 0.0
         marker.pose.orientation.y = 0.0
         marker.pose.orientation.z = 0.0

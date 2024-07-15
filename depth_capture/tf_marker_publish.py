@@ -13,9 +13,9 @@ def publish_marker(frame_id, point, marker_pub):
     marker.id = 0
     marker.type = Marker.CUBE
     marker.action = Marker.ADD
-    marker.pose.position.x = 0.8 #10.64852893 -61.46935271 -54.43308728
-    marker.pose.position.y = -0.3
-    marker.pose.position.z = 0.05
+    marker.pose.position.x = -0.08 #-0.03, -0.01, 0.54
+    marker.pose.position.y = -0.01
+    marker.pose.position.z = 0.54
     marker.pose.orientation.x = 0.0
     marker.pose.orientation.y = 0.0
     marker.pose.orientation.z = 0.0
