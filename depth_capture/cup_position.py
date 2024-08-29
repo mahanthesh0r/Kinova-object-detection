@@ -15,6 +15,7 @@ from kortex_api.autogen.client_stubs.BaseClientRpc import BaseClient
 from kortex_api.autogen.messages import Base_pb2
 from kortex_api.Exceptions.KServerException import KServerException
 from math import sqrt, inf, degrees, radians
+from std_msgs.msg import String
 
 # Constants for image processing
 NEW_WIDTH = 480
@@ -58,6 +59,9 @@ def calculate_world_coordinates(u, v, Z_c, K, R, t):
     # Convert from camera coordinates to world coordinates
     world_coords = R.dot(camera_coords) + t
 
+    offset = np.array([0, 56.39, -3.05])  # offset from the camera to the end effector
+    world_coords += offset
+
     return world_coords
 
 def reproject_world_to_image(world_coords, K, R, t):
@@ -92,12 +96,19 @@ class ImageProcessor:
         # Convert the image to the HSV color space
         hsv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
 
-        # Define the range of blue color in HSV
-        lower_blue = np.array([100, 150, 0])
-        upper_blue = np.array([140, 255, 255])
+        # Define the range of red color in HSV
+        # Red can be in two ranges, so we define two sets of lower and upper bounds
+        lower_red1 = np.array([0, 150, 0])
+        upper_red1 = np.array([10, 255, 255])
+        lower_red2 = np.array([160, 150, 0])
+        upper_red2 = np.array([180, 255, 255])
 
-         # Threshold the HSV image to get only blue colors
-        mask = cv2.inRange(hsv_image, lower_blue, upper_blue)
+        # Threshold the HSV image to get only red colors in both ranges
+        mask1 = cv2.inRange(hsv_image, lower_red1, upper_red1)
+        mask2 = cv2.inRange(hsv_image, lower_red2, upper_red2)
+
+        # Combine the masks for the two red ranges
+        mask = cv2.bitwise_or(mask1, mask2)
         
         # Find contours in the mask
         contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -124,10 +135,9 @@ class ImageProcessor:
         resized_image = cv2.resize(cv_image, (NEW_WIDTH, NEW_HEIGHT))
 
         # Get the depth value for the specified pixel coordinates
-        # u = 122
-        # v = 96
-
         Z_c = cv_depth_image[v, u]
+        Z_c = abs(Z_c + 10) # offset from the camera to the end effector  
+
         if np.isnan(Z_c) or np.isinf(Z_c):
             rospy.logwarn("Invalid depth value at pixel coordinates ({}, {})".format(u, v))
             return
@@ -196,6 +206,9 @@ class ImageProcessor:
 
     def transform_to_robot_frame(self, world_coords):
        
+        pub = rospy.Publisher('object_location', String, queue_size=10)
+        
+
         # Wait for the transformation to be available
         self.listener.waitForTransform("/base_link", "/camera_link", rospy.Time(0), rospy.Duration(4.0))
 
@@ -230,6 +243,13 @@ class ImageProcessor:
 
             print("Euler Angles: ", degrees(euler_angles[0]), degrees(euler_angles[1]), degrees(euler_angles[2]))
 
+            #Publish the robot point and euler angles
+            object_location = "x: " + str(robot_point[0][3]) + " y: " + str(robot_point[1][3]) + " z: " + str(robot_point[2][3]) + " roll: " + str(degrees(euler_angles[0])) + " pitch: " + str(degrees(euler_angles[1])) + " yaw: " + str(degrees(euler_angles[2]))
+            rospy.loginfo("Publishing object location: %s", object_location)
+            pub.publish(object_location)
+
+            rospy.sleep(1)
+            
             return robot_point[:3, 3]  # extract the (x, y, z) coordinates
         except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
             rospy.logerr("Transform lookup failed")
