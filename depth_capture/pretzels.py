@@ -96,47 +96,48 @@ class ImageProcessor:
         # Convert the image to the HSV color space
         hsv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
 
-        # Define the range of red color in HSV
-        # Red can be in two ranges, so we define two sets of lower and upper bounds
-        lower_red1 = np.array([0, 150, 0])
-        upper_red1 = np.array([10, 255, 255])
-        lower_red2 = np.array([160, 150, 0])
-        upper_red2 = np.array([180, 255, 255])
+        # Define the range of brown color in HSV
+        lower_brown = np.array([10, 100, 20])
+        upper_brown = np.array([20, 255, 200])
 
-        # Threshold the HSV image to get only red colors in both ranges
-        mask1 = cv2.inRange(hsv_image, lower_red1, upper_red1)
-        mask2 = cv2.inRange(hsv_image, lower_red2, upper_red2)
-
-        # Combine the masks for the two red ranges
-        mask = cv2.bitwise_or(mask1, mask2)
+        # Create a mask for the brown color
+        mask = cv2.inRange(hsv_image, lower_brown, upper_brown)
+        
         
         # Find contours in the mask
         contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
         if contours:
-            # Find the largest contour
-            c = max(contours, key=cv2.contourArea)
-            
-            # Get the center of the contour
-            M = cv2.moments(c)
+            # Identify the largest contour
+            largest_contour = max(contours, key=cv2.contourArea)
+
+            # Calculate the center of the largest contour
+            M = cv2.moments(largest_contour)
             if M["m00"] != 0:
-                center_x = int(M["m10"] / M["m00"])
-                center_y = int(M["m01"] / M["m00"])
-                
-                # Draw a red dot at the center
-                cv2.circle(cv_image, (center_x, center_y), 5, (0, 0, 255), -1)
+                cX = int(M["m10"] / M["m00"])
+                cY = int(M["m01"] / M["m00"])
+
+                 # Draw a red dot at the center
+                cv2.circle(cv_image, (cX, cY), 5, (0, 0, 255), -1)
                 
                 # Scale the coordinates
                 height, width, _ = cv_image.shape
-                u = int(center_x * NEW_WIDTH / width)
-                v = int(center_y * NEW_HEIGHT / height)
+                u = int(cX * NEW_WIDTH / width)
+                v = int(cY * NEW_HEIGHT / height)
+            else:
+                cX, cY = 0, 0
+
+            # Use the center coordinates (cX, cY) as needed
+            rospy.loginfo(f"Center of the pretzel: ({cX}, {cY})")
+        else:
+            rospy.loginfo("No pretzel found")
 
         # Resize the image
         resized_image = cv2.resize(cv_image, (NEW_WIDTH, NEW_HEIGHT))
 
         # Get the depth value for the specified pixel coordinates
         Z_c = cv_depth_image[v, u]
-        Z_c = abs(Z_c + 10) # offset from the camera to the end effector  
+        #Z_c = abs(Z_c + 10) # offset from the camera to the end effector  
 
         if np.isnan(Z_c) or np.isinf(Z_c):
             rospy.logwarn("Invalid depth value at pixel coordinates ({}, {})".format(u, v))
