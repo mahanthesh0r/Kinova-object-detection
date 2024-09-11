@@ -16,6 +16,7 @@ from kortex_api.autogen.messages import Base_pb2
 from kortex_api.Exceptions.KServerException import KServerException
 from math import sqrt, inf, degrees, radians
 from std_msgs.msg import String
+import math
 
 # Constants for image processing
 NEW_WIDTH = 480
@@ -85,6 +86,44 @@ class ImageProcessor:
         ts = message_filters.ApproximateTimeSynchronizer([rgb_sub, depth_sub], 10, 0.1)
         ts.registerCallback(self.image_callback)
 
+        self.pretzels_angle = 0
+
+    
+    def calculate_pretzel_orientation(self, largest_brown_contour, image):
+        """
+        Calculate the orientation of the pretzel from its contour.
+        Returns: angle of rotation in radians
+        """
+        # Fit an ellipse to the contour (this method requires at least 5 points)
+        if len(largest_brown_contour) >= 5:
+            ellipse = cv2.fitEllipse(largest_brown_contour)
+            center, axes, angle = ellipse
+            cx, cy = int(center[0]), int(center[1])  # Center of the ellipse
+            major_axis_length = max(axes) / 2  # Half of the major axis length
+            minor_axis_length = min(axes) / 2  # Half of the minor axis length
+
+            # The angle is in degrees, convert it to radians
+            angle_rad = math.radians(angle)
+
+            # Draw the major axis (in the direction of the pretzel's orientation)
+            major_axis_x = int(cx + major_axis_length * math.cos(angle_rad))
+            major_axis_y = int(cy + major_axis_length * math.sin(angle_rad))
+            cv2.line(image, (cx, cy), (major_axis_x, major_axis_y), (0, 255, 0), 2)  # Green line for major axis
+
+            # Draw the minor axis (perpendicular to the major axis)
+            minor_axis_x = int(cx - minor_axis_length * math.sin(angle_rad))
+            minor_axis_y = int(cy + minor_axis_length * math.cos(angle_rad))
+            cv2.line(image, (cx, cy), (minor_axis_x, minor_axis_y), (255, 0, 0), 2)  # Blue line for minor axis
+
+            # Draw the center of the ellipse
+            cv2.circle(image, (cx, cy), 5, (0, 0, 255), -1)  # Red dot at the center
+
+            return angle_rad, center, angle
+        else:
+            return None, None, None
+
+        
+
     def image_callback(self, rgb_data, depth_data):
         try:
             cv_image = self.bridge.imgmsg_to_cv2(rgb_data, "bgr8")
@@ -96,36 +135,82 @@ class ImageProcessor:
         # Convert the image to the HSV color space
         hsv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
 
-        # Define the range of brown color in HSV
-        lower_brown = np.array([10, 100, 20])
-        upper_brown = np.array([20, 255, 200])
+        # Define the range of white color in HSV
+        lower_white = np.array([0, 0, 168])
+        upper_white = np.array([172, 111, 255])
 
         # Create a mask for the brown color
-        mask = cv2.inRange(hsv_image, lower_brown, upper_brown)
+        white_mask = cv2.inRange(hsv_image, lower_white, upper_white)
         
         
         # Find contours in the mask
-        contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(white_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
         if contours:
             # Identify the largest contour
             largest_contour = max(contours, key=cv2.contourArea)
+            x, y, w, h = cv2.boundingRect(largest_contour)
 
-            # Calculate the center of the largest contour
-            M = cv2.moments(largest_contour)
-            if M["m00"] != 0:
-                cX = int(M["m10"] / M["m00"])
-                cY = int(M["m01"] / M["m00"])
+            # Draw the bounding box around the white contour (plate)
+            cv2.rectangle(cv_image, (x, y), (x + w, y + h), (255, 0, 0), 2)  # Blue bounding box
 
-                 # Draw a red dot at the center
-                cv2.circle(cv_image, (cX, cY), 5, (0, 0, 255), -1)
-                
-                # Scale the coordinates
-                height, width, _ = cv_image.shape
-                u = int(cX * NEW_WIDTH / width)
-                v = int(cY * NEW_HEIGHT / height)
-            else:
-                cX, cY = 0, 0
+            # Define the range of brown color in HSV
+            lower_brown = np.array([10, 100, 20])
+            upper_brown = np.array([30, 255, 200])
+
+            # Create a mask for the brown color within the bounding box of the plate
+            plate_region = hsv_image[y:y+h, x:x+w]
+            brown_mask = cv2.inRange(plate_region, lower_brown, upper_brown)
+
+            # Apply Gaussian blur to the mask to reduce noise
+            brown_mask = cv2.GaussianBlur(brown_mask, (5, 5), 0)
+
+            # Apply morphological operations to clean up the mask
+            kernel = np.ones((5, 5), np.uint8)
+            brown_mask = cv2.morphologyEx(brown_mask, cv2.MORPH_CLOSE, kernel)
+            brown_mask = cv2.morphologyEx(brown_mask, cv2.MORPH_OPEN, kernel)
+
+            # Find contours in the brown mask
+            brown_contours, _ = cv2.findContours(brown_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+            if brown_contours:
+
+                # Identify the largest brown contour
+                largest_brown_contour = max(brown_contours, key=cv2.contourArea)
+
+                # Calculate the center and orientation of the largest brown contour
+                angle_rad, pretzel_center, pretzel_angle = self.calculate_pretzel_orientation(largest_brown_contour, cv_image)
+
+                if pretzel_center is not None:
+                    # Calculate orientation of the pretzel and adjust the robot's end-effector accordingly
+                    rospy.loginfo(f"Orientation of the pretzel: {math.degrees(angle_rad)} degrees")
+                    self.pretzel_angle = angle_rad
+
+                    # Adjust the robot's orientation based on the pretzel orientation
+                    robot_orientation_quaternion = tf.transformations.quaternion_from_euler(0, 0, angle_rad)
+                    rospy.loginfo(f"Robot Quaternion for adjustment: {robot_orientation_quaternion}")
+
+                # Calculate the center of the largest contour
+                M = cv2.moments(largest_brown_contour)
+                if M["m00"] != 0:
+                    cX = int(M["m10"] / M["m00"]) + x
+                    cY = int(M["m01"] / M["m00"]) + y
+
+                    # Draw a red dot at the center
+                    cv2.circle(cv_image, (cX, cY), 5, (0, 0, 255), -1)
+
+                    # Calculate the bounding box for the largest brown contour
+                    bx, by, bw, bh = cv2.boundingRect(largest_brown_contour)
+
+                    # Draw the bounding box around the brown pretzel
+                    cv2.rectangle(cv_image, (x + bx, y + by), (x + bx + bw, y + by + bh), (0, 255, 0), 2)
+                    
+                    # Scale the coordinates
+                    height, width, _ = cv_image.shape
+                    u = int(cX * NEW_WIDTH / width)
+                    v = int(cY * NEW_HEIGHT / height)
+                else:
+                    cX, cY = 0, 0
 
             # Use the center coordinates (cX, cY) as needed
             rospy.loginfo(f"Center of the pretzel: ({cX}, {cY})")
@@ -242,10 +327,13 @@ class ImageProcessor:
             print("Angle (radians): ", angle)
             euler_angles = tf.transformations.euler_from_quaternion(rot)
 
+            #Pretzel orientation
+            #euler_angles[0] = self.pretzel_angle
+
             print("Euler Angles: ", degrees(euler_angles[0]), degrees(euler_angles[1]), degrees(euler_angles[2]))
 
             #Publish the robot point and euler angles
-            object_location = "x: " + str(robot_point[0][3]) + " y: " + str(robot_point[1][3]) + " z: " + str(robot_point[2][3]) + " roll: " + str(degrees(euler_angles[0])) + " pitch: " + str(degrees(euler_angles[1])) + " yaw: " + str(degrees(euler_angles[2]))
+            object_location = "x: " + str(robot_point[0][3]) + " y: " + str(robot_point[1][3]) + " z: " + str(robot_point[2][3]) + " roll: " + str(degrees(euler_angles[0])) + " pitch: " + str(degrees(euler_angles[1])) + " yaw: " + str(degrees(self.pretzel_angle))
             rospy.loginfo("Publishing object location: %s", object_location)
             pub.publish(object_location)
 
