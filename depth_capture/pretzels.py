@@ -251,9 +251,9 @@ class ImageProcessor:
 
 
         # #offset = np.array([0.0, 56.39, -3.05]) / 1000
-        depth_offset = np.array([27.50, 00.00, 00.00]) / 1000
+        #depth_offset = np.array([27.50, 00.00, 00.00]) / 1000
 
-        world_coords = world_coords + depth_offset
+       # world_coords = world_coords + depth_offset
         # print("adjusted world coords: ", world_coords + offset)
 
         print("Calculated World Coordinates in Meters:", world_coords)
@@ -362,68 +362,14 @@ class ImageProcessor:
             rospy.loginfo("Publishing object location: %s", object_location)
             pub.publish(object_location)
 
-            self.transform_to_tool_frame(robot_point[:3, 3])
-
+            
             rospy.sleep(1)
             
             return robot_point[:3, 3]  # extract the (x, y, z) coordinates
         except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
             rospy.logerr("Transform lookup failed")
             return None
-        
-    def transform_to_tool_frame(self, robot_frame_coords):
-         # Wait for the transformation to be available
-        self.listener.waitForTransform("/camera_link", "/tool_frame", rospy.Time(0), rospy.Duration(4.0))
-
-         # Create a TransformStamped object with the world coordinates
-        robot_point = tf.transformations.translation_matrix(robot_frame_coords)
-        robot_point[3][3] = 1.0  # homogeneous coordinate
-
-         # Get the transformation from the world frame to the robot frame
-        try:
-            (trans, rot) = self.listener.lookupTransform('/camera_link', '/tool_frame', rospy.Time(0))
-
-           
-            #print("Normalized Quaternion: ", rot)
-
-            transform = tf.transformations.concatenate_matrices(
-                tf.transformations.translation_matrix(trans),
-                tf.transformations.quaternion_matrix(rot)
-            )
-            #print("Transform: ", transform)
-            # Transform the world coordinates to the robot frame
-            tool_point = np.dot(transform, robot_point)
-             
-            #print("Tool Frame Point Point: ", tool_point)
-
-            #print("Quaternion: ", rot)
-            axis, angle = self.quaternion_to_axis_angle(rot)
-            #print("Axis: ", axis)
-            #print("Angle (radians): ", angle)
-            euler_angles = tf.transformations.euler_from_quaternion(rot)
-
-
-
-            #Pretzel orientation
-            #euler_angles[0] = self.pretzel_angle
-            #Publish the robot point and euler angles
-            offset = np.array([0.00, 56.39, -3.05]) / 1000
-            tool_point[0][3] += offset[0]
-            tool_point[1][3] -= offset[1]
-            tool_point[2][3] += offset[2]
-
             
-            object_location = "x: " + str(tool_point[0][3]) + " y: " + str(tool_point[1][3]) + " z: " + str(tool_point[2][3]) + " roll: " + str(degrees(euler_angles[0])) + " pitch: " + str(degrees(euler_angles[1])) + " yaw: " + str(degrees(self.pretzel_angle))
-            rospy.loginfo("Publishing Tool Frame object location: %s", object_location)
-            #pub.publish(object_location)
-
-            rospy.sleep(1)
-            
-            return tool_point[:3, 3]  # extract the (x, y, z) coordinates
-        except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-            rospy.logerr("Transform lookup failed")
-            return None
-        
     
     def publish_marker(self, robot_frame_coords):
         marker = Marker()
