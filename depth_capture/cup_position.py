@@ -59,8 +59,8 @@ def calculate_world_coordinates(u, v, Z_c, K, R, t):
     # Convert from camera coordinates to world coordinates
     world_coords = R.dot(camera_coords) + t
 
-    # offset = np.array([0, 56.39, -3.05])  # offset from the camera to the end effector
-    # world_coords += offset
+    offset = np.array([0, 56.39, -3.05]) / 1000  # offset from the camera to the end effector
+    world_coords += offset
 
     return world_coords
 
