@@ -89,8 +89,6 @@ class ImageProcessor:
         self.pretzels_angle = 0
 
 
-    
-    
 
     
     def calculate_pretzel_orientation(self, largest_brown_contour, image):
@@ -105,6 +103,12 @@ class ImageProcessor:
             cx, cy = int(center[0]), int(center[1])  # Center of the ellipse
             major_axis_length = max(axes) / 2  # Half of the major axis length
             minor_axis_length = min(axes) / 2  # Half of the minor axis length
+
+            # Adjust the angle by adding 90 degrees to align with the robot's end-effector
+            # if angle > 80 and angle < 100:
+            #     angle -= 90
+            # elif angle > 0 and angle < 30:
+            #     angle = 90
 
             # The angle is in degrees, convert it to radians
             angle_rad = math.radians(angle)
@@ -233,7 +237,12 @@ class ImageProcessor:
 
         # Get the depth value for the specified pixel coordinates
         Z_c = cv_depth_image[v, u]
-        #Z_c = abs(Z_c + 10) # offset from the camera to the end effector  
+        
+
+        #print("Depth Value (Z_c):", Z_c - 20)
+        #Z_c = abs(Z_c - 25) # offset from the camera to the end effector  
+        
+        
 
         if np.isnan(Z_c) or np.isinf(Z_c):
             rospy.logwarn("Invalid depth value at pixel coordinates ({}, {})".format(u, v))
@@ -275,9 +284,9 @@ class ImageProcessor:
         print("Robot Frame Coordinates:", robot_frame_coords)
         #robot_frame_coords = robot_frame_coords + offset
 
-        # Publish marker at the transformed point
-        if robot_frame_coords is not None:
-            self.publish_marker(robot_frame_coords)
+        # # Publish marker at the transformed point
+        # if robot_frame_coords is not None:
+        #     self.publish_marker(robot_frame_coords)
 
         # Optionally, display the image using OpenCV (useful for debugging)
         #cv2.imshow("Processed Image", resized_image)
@@ -340,11 +349,14 @@ class ImageProcessor:
              
             print("Robot Point: ", robot_point)
 
-            print("Quaternion: ", rot)
-            axis, angle = self.quaternion_to_axis_angle(rot)
-            print("Axis: ", axis)
-            print("Angle (radians): ", angle)
+            # print("Quaternion: ", rot)
+            # axis, angle = self.quaternion_to_axis_angle(rot)
+            # print("Axis: ", axis)
+            # print("Angle (radians): ", angle)
             euler_angles = tf.transformations.euler_from_quaternion(rot)
+
+            # Pretzel orientation
+            quaternion_pretzels = tf.transformations.quaternion_from_euler(degrees(euler_angles[0]), degrees(euler_angles[1]), degrees(self.pretzel_angle))
 
             #Pretzel orientation
             #euler_angles[0] = self.pretzel_angle
@@ -352,26 +364,86 @@ class ImageProcessor:
             print("Euler Angles: ", degrees(euler_angles[0]), degrees(euler_angles[1]), degrees(euler_angles[2]))
 
             #Publish the robot point and euler angles
-            offset = np.array([56.39, 0.00, -3.05]) / 1000
-            robot_point[0][3] -= offset[0]
-            robot_point[1][3] += offset[1]
-            robot_point[2][3] += offset[2]
+            # offset = np.array([56.39, 0.00, 0.00]) / 1000
+            # robot_point[0][3] -= offset[0]
+            # robot_point[1][3] += offset[1]
+            # robot_point[2][3] += offset[2]
+
+
+            from geometry_msgs.msg import PointStamped
+
+            object_location_point = PointStamped()
+            object_location_point.header.frame_id = "base_link"
+            object_location_point.point.x = robot_point[0][3]
+            object_location_point.point.y = robot_point[1][3]
+            object_location_point.point.z = robot_point[2][3]
+
+            #tool_frame_coords = self.transform_frames("/tool_frame", "/base_link", object_location_point)
+
+            tool_frame_coords = self.listener.transformPoint("tool_frame", object_location_point)
+
+            offset = np.array([56.39, 27.00, 40]) / 1000
+            tool_frame_coords.point.x += offset[0]
+            tool_frame_coords.point.y -= offset[1]
+            tool_frame_coords.point.z -= offset[2]
+
+            if tool_frame_coords is not None:
+                rospy.loginfo(f"tool_frame_coords : x={tool_frame_coords.point.x}, y={tool_frame_coords.point.y}, z={tool_frame_coords.point.z}," )
+                base_frame_coords = tool_frame_coords = self.listener.transformPoint("base_link", tool_frame_coords)
+
+            if base_frame_coords is not None:
+                rospy.loginfo(f"base_frame_coords : x={base_frame_coords.point.x}, y={base_frame_coords.point.y}, z={base_frame_coords.point.z}," )
+
 
             
-            object_location = "x: " + str(robot_point[0][3]) + " y: " + str(robot_point[1][3]) + " z: " + str(robot_point[2][3]) + " roll: " + str(degrees(euler_angles[0])) + " pitch: " + str(degrees(euler_angles[1])) + " yaw: " + str(degrees(self.pretzel_angle))
+            object_location = "x: " + str(base_frame_coords.point.x) + " y: " + str(base_frame_coords.point.y) + " z: " + str(base_frame_coords.point.z) + " roll: " + str(degrees(euler_angles[0])) + " pitch: " + str(degrees(euler_angles[1])) + " yaw: " + str(degrees(self.pretzel_angle))
             rospy.loginfo("Publishing object location: %s", object_location)
             pub.publish(object_location)
 
+            # Publish marker at the transformed point
+            if robot_point is not None:
+                self.publish_marker(base_frame_coords, quaternion_pretzels)
+
             
             rospy.sleep(1)
+
+            
+
             
             return robot_point[:3, 3]  # extract the (x, y, z) coordinates
         except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
             rospy.logerr("Transform lookup failed")
             return None
+        
+    def transform_frames(self, target, source, coordinates):
+        """
+        Transform coordinates from the source frame to the target frame.
+        """
+        self.listener.waitForTransform(target, source, rospy.Time(0), rospy.Duration(4.0))
+        
+         # Create a TransformStamped object with the world coordinates
+        coords_point = tf.transformations.translation_matrix(coordinates)
+        coords_point[3][3] = 1.0  # homogeneous coordinate
             
+        try:
+            (trans, rot) = self.listener.lookupTransform(target, source, rospy.Time(0))
+            
+            transform = tf.transformations.concatenate_matrices(
+                tf.transformations.translation_matrix(trans),
+                tf.transformations.quaternion_matrix(rot)
+            )
+
+            frame_point = np.dot(transform, coords_point)
+
+            euler_angles = tf.transformations.euler_from_quaternion(rot)
+
+            rospy.sleep(1)
+            return frame_point[:3, 3]
+        except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+            rospy.logerr("Transform lookup failed")
+            return None
     
-    def publish_marker(self, robot_frame_coords):
+    def publish_marker(self, robot_point, rot):
         marker = Marker()
         marker.header.frame_id = "base_link"
         marker.header.stamp = rospy.Time.now()
@@ -379,16 +451,16 @@ class ImageProcessor:
         marker.id = 0
         marker.type = Marker.SPHERE
         marker.action = Marker.ADD
-        marker.pose.position.x = robot_frame_coords[0] 
-        marker.pose.position.y = robot_frame_coords[1] 
-        marker.pose.position.z = robot_frame_coords[2]
-        marker.pose.orientation.x = 0.0
-        marker.pose.orientation.y = 0.0
-        marker.pose.orientation.z = 0.0
-        marker.pose.orientation.w = 1.0
-        marker.scale.x = 0.05  # Size of the sphere
-        marker.scale.y = 0.05
-        marker.scale.z = 0.05
+        marker.pose.position.x = robot_point.point.x
+        marker.pose.position.y = robot_point.point.y
+        marker.pose.position.z = robot_point.point.z
+        marker.pose.orientation.x = rot[0]
+        marker.pose.orientation.y = rot[1]
+        marker.pose.orientation.z = rot[2]
+        marker.pose.orientation.w = rot[3]
+        marker.scale.x = 0.01  # Size of the sphere
+        marker.scale.y = 0.01
+        marker.scale.z = 0.01
         marker.color.a = 1.0  # Alpha channel
         marker.color.r = 1.0  # Red
         marker.color.g = 0.0  # Green
