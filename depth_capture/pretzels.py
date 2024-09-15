@@ -56,6 +56,7 @@ def calculate_world_coordinates(u, v, Z_c, K, R, t):
     # Convert the image coordinates to normalized camera coordinates
     pixel_coords = np.array([u, v, 1])
     camera_coords = np.linalg.inv(K).dot(pixel_coords) * Z_c
+    
 
     # Convert from camera coordinates to world coordinates
     world_coords = R.dot(camera_coords) + t
@@ -326,6 +327,11 @@ class ImageProcessor:
         # Wait for the transformation to be available
         self.listener.waitForTransform("/base_link", "/camera_link", rospy.Time(0), rospy.Duration(4.0))
 
+        offset = np.array([0.00, 56.39, 0.00]) / 1000
+        world_coords[0] += offset[0]
+        world_coords[1] += offset[1]
+        world_coords[2] += offset[2]
+
         # Create a TransformStamped object with the world coordinates
         world_point = tf.transformations.translation_matrix(world_coords)
         world_point[3][3] = 1.0  # homogeneous coordinate
@@ -378,13 +384,15 @@ class ImageProcessor:
             object_location_point.point.y = robot_point[1][3]
             object_location_point.point.z = robot_point[2][3]
 
+            
+
             #tool_frame_coords = self.transform_frames("/tool_frame", "/base_link", object_location_point)
 
             tool_frame_coords = self.listener.transformPoint("tool_frame", object_location_point)
 
-            offset = np.array([56.39, 27.00, 40]) / 1000
+            offset = np.array([56.39, 0.00, 35]) / 1000
             tool_frame_coords.point.x += offset[0]
-            tool_frame_coords.point.y -= offset[1]
+            tool_frame_coords.point.y += offset[1]
             tool_frame_coords.point.z -= offset[2]
 
             if tool_frame_coords is not None:
@@ -401,7 +409,7 @@ class ImageProcessor:
             pub.publish(object_location)
 
             # Publish marker at the transformed point
-            if robot_point is not None:
+            if base_frame_coords is not None:
                 self.publish_marker(base_frame_coords, quaternion_pretzels)
 
             
