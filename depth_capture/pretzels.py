@@ -327,7 +327,7 @@ class ImageProcessor:
         # Wait for the transformation to be available
         self.listener.waitForTransform("/base_link", "/camera_link", rospy.Time(0), rospy.Duration(4.0))
 
-        offset = np.array([0.00, 56.39, 0.00]) / 1000
+        offset = np.array([0.00, 66.00, 0.00]) / 1000
         world_coords[0] += offset[0]
         world_coords[1] += offset[1]
         world_coords[2] += offset[2]
